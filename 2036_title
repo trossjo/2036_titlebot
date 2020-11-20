@@ -1057,5 +1057,5 @@ async def search_submissions1():
 search_submissions.start()
 search_submissions1.start()
 
-client.run('NzcyMDc4MjIxNzY3OTk5NTI4.X51b4A.kWJ7LQFJtQZAIzF0rq3f2oLR7pY')
+client.run('토큰')
 # https://discordapp.com/oauth2/authorize?client_id=당신의봇의ClientID&scope=bot
