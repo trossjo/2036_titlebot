@@ -1,0 +1,1061 @@
+import discord
+import sqlite3
+import time
+import asyncio
+from discord.ext import tasks, commands
+from discord.ext.commands import Bot
+from datetime import datetime, timedelta
+import cv2
+import numpy as np
+import pyautogui
+import time
+import sys
+import random
+import matplotlib.pylab as plt
+import math
+import time
+import sys
+from PyQt5 import QtCore, QtGui, QtWidgets, QtTest
+from PyQt5.QtCore import *
+from PyQt5.QtWidgets import *
+import win32gui
+import win32ui
+from ctypes import windll
+from PIL import Image
+
+client = commands.Bot(command_prefix="!")
+index = 0
+conn = sqlite3.connect('title.db')
+c = conn.cursor()
+player = "LDPlayer"
+runcheck = 0
+#channelid = 775376234040393729
+channelid = 774278047510691850
+######################################################################
+
+######################################################################
+
+
+def resize():
+    image = Image.open('./dimage/img_screenshot.png')
+    croppedImage = image.crop((250, 100, 600, 450))
+    croppedImage.save('./dimage/screenshot.png')
+
+
+def divide_icon(input_img, template, x, y):
+    try:
+        img = input_img
+        img1 = img.copy()
+        tempx = int(x-80)
+        tempy = int(y+20)
+        gray = cv2.cvtColor(img, cv2.COLOR_BGR2GRAY)
+
+        for idx, x in enumerate(gray):
+            for idy, y in enumerate(x):
+                if y > 167:
+                    gray[idx][idy] = 255
+                else:
+                    gray[idx][idy] = 0
+        ret, thresh = cv2.threshold(
+            gray, 127, 255, cv2.THRESH_BINARY_INV+cv2.THRESH_OTSU)
+
+        kernel = np.ones((2, 2), np.uint8)
+        opening = cv2.morphologyEx(
+            thresh, cv2.MORPH_OPEN, kernel, iterations=2)
+
+        sure_bg = cv2.dilate(opening, kernel, iterations=3)
+
+        _, contours, _ = cv2.findContours(
+            sure_bg, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
+        ROI_n = 1
+        sorted_ctrs = sorted(
+            contours, key=lambda ctr: cv2.boundingRect(ctr)[0])
+        for cnt in sorted_ctrs:
+            x, y, w, h = cv2.boundingRect(cnt)
+            ROI = img[0:100, x-5:x+w-2]
+            cv2.imwrite('./dimage/ROI_{}.png'.format(ROI_n), ROI)
+            if not img_sift(ROI, template):
+                ROI = cv2.bitwise_not(ROI)
+                axis = img_sift(ROI, template)
+            else:
+                axis = img_sift(ROI, template)
+            if axis:
+                aaa, bbb = axis
+                cv2.circle(template, (int(aaa), int(bbb)),
+                           2, (255, 0, 0), 2)
+                cv2.putText(template, str(ROI_n), (int(aaa), int(bbb)),
+                            cv2.FONT_HERSHEY_COMPLEX, 1, (255, 255, 0), 2)
+
+                pyautogui.moveTo(tempx+int(aaa), tempy+int(bbb))
+                pyautogui.click()
+                ROI_n += 1
+        return sure_bg
+    except:
+        print('divide 에러')
+        pass
+
+
+def img_sift(img1, img2):
+    try:
+        # Initiate SIFT detector
+        sift = cv2.xfeatures2d.SIFT_create()
+        # find the keypoints and descriptors with SIFT
+        kp1, des1 = sift.detectAndCompute(img1, None)
+        kp2, des2 = sift.detectAndCompute(img2, None)
+
+        # BFMatcher with default params
+        bf = cv2.BFMatcher()
+        matches = bf.knnMatch(des1, des2, k=2)
+        # Need to draw only good matches, so create a mask
+        matchesMask = [[0, 0] for i in range(len(matches))]
+        good = []
+
+        for i, (m, n) in enumerate(matches):
+            if m.distance < 0.6*n.distance:
+                matchesMask[i] = [1, 0]
+                good.append(m)
+        dst = [list(kp2[m.trainIdx].pt) for m in good]
+
+        draw_params = dict(matchColor=(0, 255, 0),
+                           singlePointColor=(255, 0, 0),
+                           matchesMask=matchesMask,
+                           flags=2)
+
+        img3 = cv2.drawMatchesKnn(img1, kp1, img2, kp2,
+                                  matches, None, **draw_params)
+
+        QApplication.processEvents()
+        if dst:
+            return dst[0]
+    except:
+        print("sift error")
+        pass
+
+
+def appcapture(player):
+    try:
+        hwnd = win32gui.FindWindow(None, player)
+        left, top, right, bot = win32gui.GetWindowRect(hwnd)
+        w = right - left
+        h = bot - top
+        posx = left
+        posy = top
+        hwndDC = win32gui.GetWindowDC(hwnd)
+        mfcDC = win32ui.CreateDCFromHandle(hwndDC)
+        saveDC = mfcDC.CreateCompatibleDC()
+
+        saveBitMap = win32ui.CreateBitmap()
+        saveBitMap.CreateCompatibleBitmap(mfcDC, w, h)
+
+        saveDC.SelectObject(saveBitMap)
+
+        result = windll.user32.PrintWindow(hwnd, saveDC.GetSafeHdc(), 0)
+
+        bmpinfo = saveBitMap.GetInfo()
+        bmpstr = saveBitMap.GetBitmapBits(True)
+
+        im = Image.frombuffer(
+            'RGB',
+            (bmpinfo['bmWidth'], bmpinfo['bmHeight']),
+            bmpstr, 'raw', 'BGRX', 0, 1)
+
+        win32gui.DeleteObject(saveBitMap.GetHandle())
+        saveDC.DeleteDC()
+        mfcDC.DeleteDC()
+        win32gui.ReleaseDC(hwnd, hwndDC)
+        # win32gui.ShowWindow(hwnd, 5)
+        # win32gui.SetForegroundWindow(hwnd)
+        QtTest.QTest.qWait(200)
+
+        if result == 1:
+            im.save('./dimage/img_screenshot.png')
+            return posx, posy
+    except:
+        print('appcapture 에러')
+        pass
+
+
+def capture(image):
+    try:
+        x, y = appcapture(player)
+        screenshot = cv2.imread(
+            './dimage/img_screenshot.png', cv2.IMREAD_COLOR)
+        template = cv2.imread(image, cv2.IMREAD_COLOR)
+        match_pos = match_center_loc(screenshot, template, x, y)
+        return match_pos
+    except:
+        print('capture 에러')
+        pass
+
+
+def capture_row(image):
+    try:
+        x, y = appcapture(player)
+        screenshot = cv2.imread(
+            './dimage/img_screenshot.png', cv2.IMREAD_COLOR)
+        template = cv2.imread(image, cv2.IMREAD_COLOR)
+        match_pos = match_center_loc_row(screenshot, template, x, y)
+        return match_pos
+    except:
+        print('capture 에러')
+        pass
+
+
+def match_center_loc(screen, template, x, y):
+    try:
+        posx = x
+        posy = y
+        res = cv2.matchTemplate(screen, template, cv2.TM_CCOEFF_NORMED)
+
+        min_val, max_val, min_loc, max_loc = cv2.minMaxLoc(res)
+        # print(max_val)
+        if max_val > 0.91:
+
+            top_left = max_loc[0]+posx, max_loc[1]+posy
+
+            h, w = template.shape[:2]
+            x, y = int(top_left[0] + w/2), int(top_left[1] + h/2)
+            return x, y
+    except:
+        print('center_loc 에러')
+        pass
+
+
+def match_center_loc_row(screen, template, x, y):
+    try:
+        posx = x
+        posy = y
+        res = cv2.matchTemplate(screen, template, cv2.TM_CCOEFF_NORMED)
+
+        min_val, max_val, min_loc, max_loc = cv2.minMaxLoc(res)
+        print(max_val)
+        if max_val > 0.895:
+
+            top_left = max_loc[0]+posx, max_loc[1]+posy
+
+            h, w = template.shape[:2]
+            x, y = int(top_left[0] + w/2), int(top_left[1] + h/2)
+            return x, y
+    except:
+        print('center_loc 에러')
+        pass
+
+
+def title_running(title, server, x, y):
+    try:
+        # 닫기
+
+        지도 = capture("./dimage/map.png")
+        if 지도 != None:
+            pyautogui.moveTo(지도[0], 지도[1])
+            pyautogui.click()
+        time.sleep(1)
+
+        확인 = capture("./dimage/ok.png")
+        if 확인 != None:
+            pyautogui.moveTo(확인[0], 확인[1])
+            pyautogui.click()
+            time.sleep(3)
+            return 1
+
+        # 성 밖에 있는지 확인
+        성 = capture("./dimage/castle.png")
+        if 성 != None:
+            time.sleep(0.5)
+            별 = capture("./dimage/star.png")
+            if 별 != None:
+                pyautogui.moveTo(별[0]-100, 별[1])
+                pyautogui.click()
+                time.sleep(2)
+                검색 = capture("./dimage/search.png")
+                if 검색 != None:
+                    print("검색")
+                    pyautogui.moveTo(검색[0]-275, 검색[1])
+                    pyautogui.click()
+                    time.sleep(0.3)
+                    pyautogui.typewrite(str(server), interval=0.05)
+                    time.sleep(0.3)
+                    pyautogui.click()
+                    pyautogui.moveTo(검색[0]-165, 검색[1])
+                    pyautogui.click()
+                    time.sleep(0.5)
+                    pyautogui.typewrite(str(x), interval=0.05)
+                    time.sleep(0.5)
+                    pyautogui.click()
+                    pyautogui.moveTo(검색[0]-65, 검색[1])
+                    pyautogui.click()
+                    time.sleep(0.5)
+                    pyautogui.typewrite(str(y), interval=0.05)
+                    time.sleep(0.5)
+                    pyautogui.click()
+                    pyautogui.moveTo(검색[0], 검색[1])
+                    pyautogui.click()
+                    time.sleep(3)
+                    센터 = capture("./dimage/img_screenshot.png")
+                    time.sleep(0.5)
+                    pyautogui.moveTo(센터[0]-10, 센터[1])
+                    pyautogui.click()
+                    print("찾음0")
+                    time.sleep(2)
+                    성클릭 = capture("./dimage/castleclick.png")
+                    time.sleep(0.5)
+                    성클릭1 = capture("./dimage/castleclick1.png")
+                    time.sleep(0.5)
+                    성클릭2 = capture("./dimage/castleclick2.png")
+                    성클릭3 = None
+                    성클릭4 = None
+                    성클릭5 = None
+                    if 성클릭 == None and 성클릭1 == None and 성클릭2 == None:
+                        성클릭3 = capture_row("./dimage/castleclick.png")
+                        time.sleep(0.5)
+                        성클릭4 = capture_row("./dimage/castleclick1.png")
+                        time.sleep(0.5)
+                        성클릭5 = capture_row("./dimage/castleclick2.png")
+                        print("row", 성클릭2, 성클릭3)
+                        if 성클릭3 == None and 성클릭4 == None and 성클릭5 == None:
+                            time.sleep(1)
+                            pyautogui.moveTo(센터[0]-10, 센터[1]+30)
+                            pyautogui.click()
+                            print("찾음1")
+                            time.sleep(1)
+                            성클릭 = capture("./dimage/castleclick.png")
+                            time.sleep(0.5)
+                            성클릭1 = capture("./dimage/castleclick1.png")
+                            time.sleep(0.5)
+                            성클릭2 = capture("./dimage/castleclick2.png")
+                            print(성클릭, 성클릭1, 성클릭2)
+                            if 성클릭 == None and 성클릭1 == None and 성클릭2 == None:
+                                성클릭3 = capture_row("./dimage/castleclick.png")
+                                time.sleep(0.5)
+                                성클릭4 = capture_row("./dimage/castleclick1.png")
+                                time.sleep(0.5)
+                                성클릭5 = capture_row("./dimage/castleclick2.png")
+                                print("row", 성클릭3, 성클릭4, 성클릭5)
+                                if 성클릭3 == None and 성클릭4 == None and 성클릭5 == None:
+                                    pyautogui.moveTo(센터[0]+10, 센터[1])
+                                    pyautogui.click()
+                                    time.sleep(1)
+                                    print("찾음2")
+                                    성클릭 = capture("./dimage/castleclick.png")
+                                    time.sleep(0.5)
+                                    성클릭1 = capture("./dimage/castleclick1.png")
+                                    time.sleep(0.5)
+                                    성클릭2 = capture("./dimage/castleclick2.png")
+                                    if 성클릭 == None and 성클릭1 == None and 성클릭2 == None:
+                                        성클릭3 = capture_row(
+                                            "./dimage/castleclick.png")
+                                        time.sleep(0.5)
+                                        성클릭4 = capture_row(
+                                            "./dimage/castleclick1.png")
+                                        time.sleep(0.5)
+                                        성클릭5 = capture_row(
+                                            "./dimage/castleclick2.png")
+                                        print("row", 성클릭3, 성클릭4, 성클릭5)
+                                        if 성클릭3 == None and 성클릭4 == None and 성클릭5 == None:
+                                            pyautogui.moveTo(
+                                                센터[0]+10, 센터[1]+30)
+                                            pyautogui.click()
+                                            time.sleep(1)
+                                            성클릭 = capture(
+                                                "./dimage/castleclick.png")
+                                            time.sleep(0.5)
+                                            성클릭1 = capture(
+                                                "./dimage/castleclick1.png")
+                                            time.sleep(0.5)
+                                            성클릭2 = capture(
+                                                "./dimage/castleclick2.png")
+
+                    #성클릭 = capture("./dimage/castleclick.png")
+                    # time.sleep(1)
+                    #성클릭1 = capture("./dimage/castleclick1.png")
+                    print("칭호클릭", 성클릭, 성클릭1, 성클릭2, 성클릭3, 성클릭4, 성클릭5)
+
+                    if 성클릭 != None or 성클릭1 != None or 성클릭2 != None or 성클릭3 != None:
+                        if 성클릭 != None:
+                            pyautogui.moveTo(성클릭[0], 성클릭[1])
+                            pyautogui.click()
+                            time.sleep(2)
+                        if 성클릭1 != None:
+                            pyautogui.moveTo(성클릭1[0], 성클릭1[1])
+                            pyautogui.click()
+                            time.sleep(2)
+                        if 성클릭2 != None:
+                            pyautogui.moveTo(성클릭2[0], 성클릭2[1])
+                            pyautogui.click()
+                            time.sleep(2)
+                        if 성클릭3 != None:
+                            pyautogui.moveTo(성클릭3[0], 성클릭3[1])
+                            pyautogui.click()
+                            time.sleep(2)
+
+                        if title == 1:
+                            print("공작")
+                            칭호 = capture("./dimage/duke.png")
+                        if title == 2:
+                            print("건축가")
+                            칭호 = capture("./dimage/arch.png")
+                        if title == 3:
+                            print("과학자")
+                            칭호 = capture("./dimage/scie.png")
+                        if title == 4:
+                            print("대법관")
+                            칭호 = capture("./dimage/just.png")
+                        if 칭호 != None:
+                            pyautogui.moveTo(칭호[0], 칭호[1]+134)
+                            pyautogui.click()
+                            확인 = capture("./dimage/ok.png")
+                            time.sleep(1)
+                            if 확인 != None:
+                                pyautogui.moveTo(확인[0], 확인[1])
+                                pyautogui.click()
+                                time.sleep(3)
+                                return 1
+    except:
+        pass
+
+
+######################################################################
+
+######################################################################
+@client.event
+async def on_ready():
+    print('Logged in as')
+    print(client.user.name)
+    print(client.user.id)
+    # client.setUsername("2036 칭호봇")
+    print('------')
+
+
+@client.event
+async def on_message(message):
+    embed = None
+
+    if message.author.bot:
+        return None
+    # print(message)
+    # print(client.connect())
+    if message.channel.name == "2036_title":
+        channel = message.channel
+        if "!" in message.content:
+
+            msg_list = message.content.split(" ")
+            msg = str(msg_list) + \
+                " 올바른 입력값을 입력해주세요. \nPlease enter a valid command."
+
+            if "!저장" in message.content or "!save" in message.content:
+                msg = "!저장 or !save 명령어는 더 이상 사용되지 않습니다.\n !save command is no longer used. It will be saved as soon as you apply."
+
+            if "!done" in message.content or "!완료" in message.content:
+                dquery = "UPDATE title SET status = 3, titletime = \'" + \
+                    str((datetime.now()+timedelta(seconds=-300)).timestamp()
+                        )+"\' WHERE title.status = 0 OR title.status = 1 AND title.username = \'"+message.author.name+"\';"
+                c.execute(dquery)
+                conn.commit()
+                query = "SELECT * from title WHERE title.status=1 AND title.username= \'" + \
+                    message.author.name+"\' ORDER BY id DESC limit 1;"
+                c.execute(query)
+                titledone = c.fetchone()
+                try:
+                    if titledone[2] == 1:
+                        칭호 = "공작 (Duke)"
+                    if titledone[2] == 2:
+                        칭호 = "건축가 (Architect)"
+                    if titledone[2] == 3:
+                        칭호 = "과학자 (Scientist)"
+                    if titledone[2] == 4:
+                        칭호 = "대법관 (Justice)"
+                    msg = "Yes sir " + titledone[1] + ". " + \
+                        칭호+" is Done."
+                except:
+                    msg = "Thanks. all title cancle."
+
+            if "!취소" in message.content or "!cancle" in message.content:
+                msg = "취소"
+
+            # 공작
+            if "!done" not in msg_list[0].lower() and "!d" in msg_list[0].lower() or "!공" in msg_list[0]:
+
+                query = "SELECT COUNT(status) FROM title WHERE status = 0 and title = 1"
+                c.execute(query)
+                waitnum = c.fetchone()
+
+                #
+                if len(msg_list) == 4:
+                    if type(msg_list[0]) == str and msg_list[1].isdecimal() == True and msg_list[2].isdecimal() == True and msg_list[3].isdecimal() == True:
+                        # REPLACE로 NAME이 없으면 INSERT, 있으면 UPDATE
+                        Rquery = "REPLACE INTO user(idx, name,server, coordx, coordy) VALUES (\'" + str(message.author.id) + "\' ,\'" + \
+                            message.author.name+"\' ," + \
+                            msg_list[1]+","+msg_list[2]+","+msg_list[3]+")"
+                        c.execute(Rquery)
+
+                        # title 테이블에도 데이터를 추가
+                        query = "REPLACE INTO title(username, title ,server, x, y, status) VALUES (\'" + \
+                            message.author.name+"\',1," + \
+                            msg_list[1]+","+msg_list[2]+","+msg_list[3]+",0)"
+                        c.execute(query)
+                        conn.commit()
+
+                        embed = discord.Embed(title="TITLE REGISTRATION SUCCESS", description="공작(Duke)", color=0x62c1cc).add_field(
+                            name="Target", value=message.author.name, inline=False).add_field(
+                            name="waiting Time", value="대기인원 : " + str(waitnum[0]) + " / " + str(int(waitnum[0])*180+30)+" 초(Sec)", inline=False).add_field(
+                            name="좌표 수정(Coordinate Modification)", value="SERVER : "+msg_list[1]+", X : "+msg_list[2]+", Y : "+msg_list[3], inline=False)
+
+                if len(msg_list) == 1:
+                    try:
+                        rquery = "SELECT * FROM USER WHERE name = \'" + message.author.name + "\';"
+                        c.execute(rquery)
+                        usertable = c.fetchone()
+
+                        query = "REPLACE INTO title(username, title ,server, x, y, status) VALUES (\'" + message.author.name+"\',1," + str(
+                            usertable[2]) + "," + str(usertable[3]) + ","+str(usertable[4])+",0)"
+                        c.execute(query)
+                        conn.commit()
+
+                        embed = discord.Embed(title="TITLE REGISTRATION SUCCESS", description="공작(Duke)", color=0x62c1cc).add_field(
+                            name="Target", value=message.author.name, inline=False).add_field(
+                            name="waiting Time", value="대기인원 : " + str(waitnum[0]) + " / " + str(int(waitnum[0])*180)+" 초(Sec)", inline=False).add_field(
+                            name="Coordinate", value="SERVER : "+str(usertable[2])+", X : "+str(usertable[3])+", Y : "+str(usertable[4]), inline=False)
+                    except:
+                        msg = (
+                            "처음 사용하시는분은 !공작 2036 123 456 을 통해 먼저 좌표를 저장해주세요. \n When you first enter ex)!duke 2036 123 456")
+
+            if "!a" in msg_list[0].lower() or "!건" in msg_list[0]:
+
+                query = "SELECT COUNT(status) FROM title WHERE status = 0 and title = 2"
+                c.execute(query)
+                waitnum = c.fetchone()
+
+                if len(msg_list) == 4:
+                    if type(msg_list[0]) == str and msg_list[1].isdecimal() == True and msg_list[2].isdecimal() == True and msg_list[3].isdecimal() == True:
+                        # REPLACE로 NAME이 없으면 INSERT, 있으면 UPDATE
+                        Rquery = "REPLACE INTO user(idx, name,server, coordx, coordy) VALUES (\'" + str(message.author.id) + "\' ,\'" + \
+                            message.author.name+"\' ," + \
+                            msg_list[1]+","+msg_list[2]+","+msg_list[3]+")"
+                        c.execute(Rquery)
+
+                        # title 테이블에도 데이터를 추가
+                        query = "INSERT INTO title(username, title ,server, x, y, status) VALUES (\'" + \
+                            message.author.name+"\',2," + \
+                            msg_list[1]+","+msg_list[2]+","+msg_list[3]+",0)"
+                        c.execute(query)
+                        conn.commit()
+
+                        embed = discord.Embed(title="TITLE REGISTRATION SUCCESS", description="건축가(Architect)", color=0x62c1cc).add_field(
+                            name="Target", value=message.author.name, inline=False).add_field(
+                            name="waiting Time", value="대기인원 : " + str(waitnum[0]) + " / " + str(int(waitnum[0])*50)+" 초(Sec)", inline=False).add_field(
+                            name="좌표 수정(Coordinate Modification)", value="SERVER : "+msg_list[1]+", X : "+msg_list[2]+", Y : "+msg_list[3], inline=False)
+
+                if len(msg_list) == 1:
+                    try:
+                        rquery = "SELECT * FROM USER WHERE name = \'" + message.author.name + "\';"
+                        c.execute(rquery)
+                        usertable = c.fetchone()
+
+                        query = "INSERT INTO title(username, title ,server, x, y, status) VALUES (\'" + message.author.name+"\',2," + str(
+                            usertable[2]) + "," + str(usertable[3]) + ","+str(usertable[4])+",0)"
+                        c.execute(query)
+                        conn.commit()
+
+                        embed = discord.Embed(title="TITLE REGISTRATION SUCCESS", description="건축가(Architect)", color=0x62c1cc).add_field(
+                            name="Target", value=message.author.name, inline=False).add_field(
+                            name="waiting Time", value="대기인원 : " + str(waitnum[0]) + " / " + str(int(waitnum[0])*50)+" 초(Sec)", inline=False).add_field(
+                            name="Coordinate", value="SERVER : "+str(usertable[2])+", X : "+str(usertable[3])+", Y : "+str(usertable[4]), inline=False)
+                    except:
+                        msg = (
+                            "처음 사용하시는분은 !건축가 2036 123 456 을 통해 먼저 좌표를 저장해주세요. \n When you first enter ex)!arch 2036 123 456")
+
+            if "!s" in msg_list[0].lower() or "!과" in msg_list[0]:
+
+                query = "SELECT COUNT(status) FROM title WHERE status = 0 and title = 3"
+                c.execute(query)
+                waitnum = c.fetchone()
+
+                if len(msg_list) == 4:
+                    if type(msg_list[0]) == str and msg_list[1].isdecimal() == True and msg_list[2].isdecimal() == True and msg_list[3].isdecimal() == True:
+                        # REPLACE로 NAME이 없으면 INSERT, 있으면 UPDATE
+                        Rquery = "REPLACE INTO user(idx, name,server, coordx, coordy) VALUES (\'" + str(message.author.id) + "\' ,\'" + \
+                            message.author.name+"\' ," + \
+                            msg_list[1]+","+msg_list[2]+","+msg_list[3]+")"
+                        c.execute(Rquery)
+
+                        # title 테이블에도 데이터를 추가
+                        query = "INSERT INTO title(username, title ,server, x, y, status) VALUES (\'" + \
+                            message.author.name+"\',3," + \
+                            msg_list[1]+","+msg_list[2]+","+msg_list[3]+",0)"
+                        c.execute(query)
+                        conn.commit()
+
+                        embed = discord.Embed(title="TITLE REGISTRATION SUCCESS", description="과학자(Scientist)", color=0x62c1cc).add_field(
+                            name="Target", value=message.author.name, inline=False).add_field(
+                            name="waiting Time", value="대기인원 : " + str(waitnum[0]) + " / " + str(int(waitnum[0])*50)+" 초(Sec)", inline=False).add_field(
+                            name="좌표 수정(Coordinate Modification)", value="SERVER : "+msg_list[1]+", X : "+msg_list[2]+", Y : "+msg_list[3], inline=False)
+
+                if len(msg_list) == 1:
+                    try:
+                        rquery = "SELECT * FROM USER WHERE name = \'" + message.author.name + "\';"
+                        c.execute(rquery)
+                        usertable = c.fetchone()
+
+                        query = "INSERT INTO title(username, title ,server, x, y, status) VALUES (\'" + message.author.name+"\',3," + str(
+                            usertable[2]) + "," + str(usertable[3]) + ","+str(usertable[4])+",0)"
+                        c.execute(query)
+                        conn.commit()
+
+                        embed = discord.Embed(title="TITLE REGISTRATION SUCCESS", description="과학자(Scientist)", color=0x62c1cc).add_field(
+                            name="Target", value=message.author.name, inline=False).add_field(
+                            name="waiting Time", value="대기인원 : " + str(waitnum[0]) + " / " + str(int(waitnum[0])*50)+" 초(Sec)", inline=False).add_field(
+                            name="Coordinate", value="SERVER : "+str(usertable[2])+", X : "+str(usertable[3])+", Y : "+str(usertable[4]), inline=False)
+                    except:
+                        msg = (
+                            "처음 사용하시는분은 !과학자 2036 123 456 을 통해 먼저 좌표를 저장해주세요. \n When you first enter ex)!scie 2036 123 456")
+
+            #
+            if "!j" in msg_list[0].lower() or "!대" in msg_list[0]:
+
+                query = "SELECT COUNT(status) FROM title WHERE status = 0 and title = 4"
+                c.execute(query)
+                waitnum = c.fetchone()
+
+                if len(msg_list) == 4:
+                    if type(msg_list[0]) == str and msg_list[1].isdecimal() == True and msg_list[2].isdecimal() == True and msg_list[3].isdecimal() == True:
+                        # REPLACE로 NAME이 없으면 INSERT, 있으면 UPDATE
+                        Rquery = "REPLACE INTO user(idx, name,server, coordx, coordy) VALUES (\'" + str(message.author.id) + "\' ,\'" + \
+                            message.author.name+"\' ," + \
+                            msg_list[1]+","+msg_list[2]+","+msg_list[3]+")"
+                        c.execute(Rquery)
+
+                        # title 테이블에도 데이터를 추가
+                        query = "INSERT INTO title(username, title ,server, x, y, status) VALUES (\'" + \
+                            message.author.name+"\',4," + \
+                            msg_list[1]+","+msg_list[2]+","+msg_list[3]+",0)"
+                        c.execute(query)
+                        conn.commit()
+
+                        embed = discord.Embed(title="TITLE REGISTRATION SUCCESS", description="대법관(Justice)", color=0x62c1cc).add_field(
+                            name="Target", value=message.author.name, inline=False).add_field(
+                            name="waiting Time", value="대기인원 : " + str(waitnum[0]) + " / " + str(int(waitnum[0])*50)+" 초(Sec)", inline=False).add_field(
+                            name="좌표 수정(Coordinate Modification)", value="SERVER : "+msg_list[1]+", X : "+msg_list[2]+", Y : "+msg_list[3], inline=False)
+
+                if len(msg_list) == 1:
+                    try:
+                        rquery = "SELECT * FROM USER WHERE name = \'" + message.author.name + "\';"
+                        c.execute(rquery)
+                        usertable = c.fetchone()
+
+                        query = "INSERT INTO title(username, title ,server, x, y, status) VALUES (\'" + message.author.name+"\',4," + str(
+                            usertable[2]) + "," + str(usertable[3]) + ","+str(usertable[4])+",0)"
+                        c.execute(query)
+                        conn.commit()
+
+                        embed = discord.Embed(title="TITLE REGISTRATION SUCCESS", description="대법관(Justice)", color=0x62c1cc).add_field(
+                            name="Target", value=message.author.name, inline=False).add_field(
+                            name="waiting Time", value="대기인원 : " + str(waitnum[0]) + " / " + str(int(waitnum[0])*50)+" 초(Sec)", inline=False).add_field(
+                            name="Coordinate", value="SERVER : "+str(usertable[2])+", X : "+str(usertable[3])+", Y : "+str(usertable[4]), inline=False)
+                    except:
+                        msg = (
+                            "처음 사용하시는분은 !과학자 2036 123 456 을 통해 먼저 좌표를 저장해주세요. \n When you first enter ex)!scie 2036 123 456")
+
+            if embed is not None:
+                await channel.send(embed=embed)
+            else:
+                await channel.send(msg)
+
+
+@tasks.loop(seconds=3.0)
+async def search_submissions():
+
+    channel = client.get_channel(channelid)
+    if channel != None:
+
+        # 재시작할때는 진행중을 모두 완료로
+
+        query = "UPDATE title SET status = 2 WHERE status = 1;"
+        c.execute(query)
+        conn.commit()
+
+        # 칭호봇이 진행중인지 체크
+        checkquery = "SELECT * FROM title WHERE status = 1"
+        c.execute(checkquery)
+        check_title = c.fetchone()
+
+        # 진행중이 아니면 진행
+        if check_title == None:
+
+            # 대기열
+            query = "SELECT * FROM title WHERE status = 0 AND title = 1 ORDER BY id ASC limit 1;"
+            c.execute(query)
+            wait_title = c.fetchone()
+            #print("공작2", wait_title)
+
+            # 대기열 들어왔을 때
+            if wait_title != None:
+                봇인증2 = capture('./dimage/antibot2.png')
+                time.sleep(1)
+                봇인증1 = capture('./dimage/antibot.png')
+
+                # 현재시간과 칭호부여시간 비교
+                now = datetime.now()
+
+                query = "SELECT * FROM title WHERE (status = 2 AND title = 1) or (status = 1 AND title = 1) ORDER BY id DESC limit 1;"
+                c.execute(query)
+                end_title = c.fetchone()
+                interval = (now-datetime.fromtimestamp(end_title[7])).seconds
+                print("interval : ", interval)
+
+                # 칭호부여 시간이 40초가 넘으면
+                if interval > 180 and 봇인증1 == None and 봇인증2 == None:
+                    await channel.send(embed=discord.Embed(title="공작 칭호 부여중입니다.", description="Duke title is being given.", color=0xFF7E7E).add_field(
+                        name="Target", value=wait_title[1], inline=False).add_field(
+                        name="Coordinate", value="SERVER : "+str(wait_title[3])+", X : "+str(wait_title[4])+", Y : "+str(wait_title[5]), inline=False))
+
+                    # 진행중으로 업데이트
+                    uquery = "UPDATE title SET status = 1, titletime = \'" + str(datetime.now().timestamp()) + "\' WHERE title.id = " + \
+                        str(wait_title[0])+";"
+                    c.execute(uquery)
+                    conn.commit()
+                    # 칭호 부여
+                    check = title_running(
+                        wait_title[2], wait_title[3], wait_title[4], wait_title[5])
+
+                    # 완료로 업데이트
+                    appcapture(player)
+                    time.sleep(0.5)
+                    resize()
+                    time.sleep(1)
+                    await channel.send(file=discord.File('./dimage/screenshot.png'))
+                    if check != 1:
+                        await channel.send(embed=discord.Embed(title="좌표를 다시 확인해주세요", description="Check your coordinate", color=0x89FF82))
+                    if check == 1:
+                        await channel.send(embed=discord.Embed(title="공작 칭호 부여가 완료되었습니다.", description="Completed giving Duke title.", color=0x89FF82))
+                        print("완료")
+
+                        # add_field(
+                        #    name="Target", value=str(wait_title[1]), inline=False).add_field(
+                        #    name="Coordinate", value="SERVER : "+str(wait_title[3])+", X : "+str(wait_title[4])+", Y : "+str(wait_title[5]), inline=False))
+
+                    성안 = capture('./dimage/castle.png')
+                    if 성안 != None:
+                        pyautogui.moveTo(성안)
+                        pyautogui.click()
+                        time.sleep(1)
+
+                    equery = "UPDATE title SET status = 2 WHERE title.id = " + \
+                        str(wait_title[0])+";"
+                    c.execute(equery)
+                    conn.commit()
+
+        checkquery1 = "SELECT * FROM title WHERE status = 1"
+        c.execute(checkquery1)
+        check_title1 = c.fetchone()
+
+        # 진행중이 아니면 진행
+        if check_title1 == None:
+
+            # 대기열
+            query = "SELECT * FROM title WHERE status = 0 AND title = 2 ORDER BY id ASC limit 1;"
+            c.execute(query)
+            wait_title = c.fetchone()
+            #print("건축가2", wait_title)
+
+            # 대기열 들어왔을 때
+            if wait_title != None:
+                봇인증2 = capture('./dimage/antibot2.png')
+                time.sleep(1)
+                봇인증1 = capture('./dimage/antibot.png')
+
+                # 현재시간과 칭호부여시간 비교
+                now = datetime.now()
+
+                query = "SELECT * FROM title WHERE status = 2 AND title = 2 ORDER BY id DESC limit 1;"
+                c.execute(query)
+                end_title = c.fetchone()
+                interval = (now-datetime.fromtimestamp(end_title[7])).seconds
+                #print("interval : ", interval)
+
+                # 칭호부여 시간이 40초가 넘으면
+                if interval > 40 and 봇인증1 == None and 봇인증2 == None:
+                    # 개인 메세지
+                    memquery = "SELECT idx FROM user WHERE name = \'" + \
+                        wait_title[1] + "\';"
+                    c.execute(memquery)
+                    memid = c.fetchone()
+
+                    # await member.send("30초안에 칭호가 부여될 예정입니다.")
+                    # print(member)
+                    # await channel.send("@"+wait_title[1])
+                    await channel.send(embed=discord.Embed(title="건축가 칭호 부여중입니다.", description="Architect title is being given.", color=0xFF7E7E).add_field(
+                        name="Target", value=wait_title[1], inline=False).add_field(
+                        name="Coordinate", value="SERVER : "+str(wait_title[3])+", X : "+str(wait_title[4])+", Y : "+str(wait_title[5]), inline=False))
+                    # 진행중으로 업데이트
+                    uquery = "UPDATE title SET status = 1, titletime = \'" + str(datetime.now().timestamp()) + "\' WHERE title.id = " + \
+                        str(wait_title[0])+";"
+                    c.execute(uquery)
+                    conn.commit()
+                    # 칭호 부여
+                    check = title_running(
+                        wait_title[2], wait_title[3], wait_title[4], wait_title[5])
+
+                    # 완료로 업데이트
+                    appcapture(player)
+                    time.sleep(0.5)
+                    resize()
+                    time.sleep(1)
+                    await channel.send(file=discord.File('./dimage/screenshot.png'))
+                    if check != 1:
+                        await channel.send(embed=discord.Embed(title="좌표를 다시 확인해주세요", description="Check your coordinate", color=0x89FF82))
+                    if check == 1:
+                        await channel.send(embed=discord.Embed(title="건축가 칭호 부여가 완료되었습니다.", description="Completed giving Architect title.", color=0x89FF82))
+                    print("완료")
+                    equery = "UPDATE title SET status = 2 WHERE title.id = " + \
+                        str(wait_title[0])+";"
+                    c.execute(equery)
+                    conn.commit()
+
+        checkquery2 = "SELECT * FROM title WHERE status = 1"
+        c.execute(checkquery2)
+        check_title2 = c.fetchone()
+
+        # 진행중이 아니면 진행
+        if check_title2 == None:
+
+            # 대기열
+            query = "SELECT * FROM title WHERE status = 0 AND title = 3 ORDER BY id ASC limit 1;"
+            c.execute(query)
+            wait_title = c.fetchone()
+            #print("과학자2", wait_title)
+
+            # 대기열 들어왔을 때
+            if wait_title != None:
+                봇인증2 = capture('./dimage/antibot2.png')
+                time.sleep(1)
+                봇인증1 = capture('./dimage/antibot.png')
+
+                # 현재시간과 칭호부여시간 비교
+                now = datetime.now()
+
+                query = "SELECT * FROM title WHERE status = 2 AND title = 3 ORDER BY id DESC limit 1;"
+                c.execute(query)
+                end_title = c.fetchone()
+                interval = (now-datetime.fromtimestamp(end_title[7])).seconds
+                #print("interval : ", interval)
+
+                # 칭호부여 시간이 40초가 넘으면
+                if interval > 30 and 봇인증1 == None and 봇인증2 == None:
+                    await channel.send(embed=discord.Embed(title="과학자 칭호 부여중입니다.", description="Scientist title is being given.", color=0xFF7E7E).add_field(
+                        name="Target", value=wait_title[1], inline=False).add_field(
+                        name="Coordinate", value="SERVER : "+str(wait_title[3])+", X : "+str(wait_title[4])+", Y : "+str(wait_title[5]), inline=False))
+                    # 진행중으로 업데이트
+                    uquery = "UPDATE title SET status = 1, titletime = \'" + str(datetime.now().timestamp()) + "\' WHERE title.id = " + \
+                        str(wait_title[0])+";"
+                    c.execute(uquery)
+                    conn.commit()
+                    # 칭호 부여
+                    check = title_running(
+                        wait_title[2], wait_title[3], wait_title[4], wait_title[5])
+
+                    # 완료로 업데이트
+                    appcapture(player)
+                    time.sleep(0.5)
+                    resize()
+                    time.sleep(1)
+                    await channel.send(file=discord.File('./dimage/screenshot.png'))
+                    if check != 1:
+                        await channel.send(embed=discord.Embed(title="좌표를 다시 확인해주세요", description="Check your coordinate", color=0x89FF82))
+                    if check == 1:
+                        await channel.send(embed=discord.Embed(title="과학자 칭호 부여가 완료되었습니다.", description="Completed giving Scientist title.", color=0x89FF82))
+                    # print("완료")
+                    equery = "UPDATE title SET status = 2 WHERE title.id = " + \
+                        str(wait_title[0])+";"
+                    c.execute(equery)
+                    conn.commit()
+
+        checkquery3 = "SELECT * FROM title WHERE status = 1"
+        c.execute(checkquery3)
+        check_title3 = c.fetchone()
+
+        # 진행중이 아니면 진행
+        if check_title3 == None:
+
+            # 대기열
+            query = "SELECT * FROM title WHERE status = 0 AND title = 4 ORDER BY id ASC limit 1;"
+            c.execute(query)
+            wait_title = c.fetchone()
+            #print("대법관2", wait_title)
+
+            # 대기열 들어왔을 때
+            if wait_title != None:
+                봇인증2 = capture('./dimage/antibot2.png')
+                time.sleep(1)
+                봇인증1 = capture('./dimage/antibot.png')
+
+                # 현재시간과 칭호부여시간 비교
+                now = datetime.now()
+
+                query = "SELECT * FROM title WHERE status = 2 AND title = 4 ORDER BY id DESC limit 1;"
+                c.execute(query)
+                end_title = c.fetchone()
+                interval = (now-datetime.fromtimestamp(end_title[7])).seconds
+                #print("interval : ", interval)
+
+                # 칭호부여 시간이 40초가 넘으면
+                if interval > 30 and 봇인증1 == None and 봇인증2 == None:
+                    await channel.send(embed=discord.Embed(title="대법관 칭호 부여중입니다.", description="Justice title is being given.", color=0xFF7E7E).add_field(
+                        name="Target", value=wait_title[1], inline=False).add_field(
+                        name="Coordinate", value="SERVER : "+str(wait_title[3])+", X : "+str(wait_title[4])+", Y : "+str(wait_title[5]), inline=False))
+                    # 진행중으로 업데이트
+                    uquery = "UPDATE title SET status = 1, titletime = \'" + str(datetime.now().timestamp()) + "\' WHERE title.id = " + \
+                        str(wait_title[0])+";"
+                    c.execute(uquery)
+                    conn.commit()
+                    # 칭호 부여
+                    check = title_running(
+                        wait_title[2], wait_title[3], wait_title[4], wait_title[5])
+
+                    # 완료로 업데이트
+                    appcapture(player)
+                    time.sleep(0.5)
+                    resize()
+                    time.sleep(1)
+                    await channel.send(file=discord.File('./dimage/screenshot.png'))
+                    if check != 1:
+                        await channel.send(embed=discord.Embed(title="좌표를 다시 확인해주세요", description="Check your coordinate", color=0x89FF82))
+                    if check == 1:
+                        await channel.send(embed=discord.Embed(title="대법관 칭호 부여가 완료되었습니다.", description="Completed giving Justice title.", color=0x89FF82))
+                    # print("완료")
+                    equery = "UPDATE title SET status = 2 WHERE title.id = " + \
+                        str(wait_title[0])+";"
+                    c.execute(equery)
+                    conn.commit()
+
+
+@tasks.loop(seconds=30.0)
+async def search_submissions1():
+    global runcheck
+    channel = client.get_channel(channelid)
+    if channel != None:
+        checkquery = "SELECT * FROM title WHERE status = 1"
+        c.execute(checkquery)
+        check_title = c.fetchone()
+
+        # 진행중이 아니면 진행
+        if check_title == None:
+            #print(" 칭호봇 check ", runcheck)
+            지도 = capture("./dimage/map.png")
+            if 지도 != None:
+                pyautogui.moveTo(지도)
+                pyautogui.click()
+            닫기1 = capture("./dimage/close1.png")
+            if 닫기1 != None:
+                pyautogui.moveTo(닫기1[0], 닫기1[1])
+                pyautogui.click()
+            await asyncio.sleep(0.5)
+            닫기2 = capture("./dimage/close2.png")
+            if 닫기2 != None:
+                pyautogui.moveTo(닫기2[0], 닫기2[1])
+                pyautogui.click()
+            await asyncio.sleep(0.5)
+            재부팅 = capture("./dimage/reboot.png")
+            if 재부팅 != None:
+                pyautogui.moveTo(재부팅[0], 재부팅[1])
+                pyautogui.click()
+            await asyncio.sleep(0.5)
+            라오킹아이콘 = capture("./dimage/rok.png")
+            if 라오킹아이콘 != None:
+                pyautogui.moveTo(라오킹아이콘[0], 라오킹아이콘[1])
+                pyautogui.click()
+            봇인증2 = capture('./dimage/antibot2.png')
+            if 봇인증2 != None:
+                try:
+                    print('안티봇')
+                    x, y = 봇인증2
+                    pyautogui.moveTo(봇인증2)
+                    pyautogui.click()
+                    await asyncio.sleep(8)
+                    아이콘 = pyautogui.screenshot(
+                        region=(int(x)+70, int(y)-20, 120, 40))
+                    아이콘.save('./dimage/icon.png')
+                    배경 = pyautogui.screenshot(
+                        region=(int(x)-80, int(y)+20, 265, 300))
+                    배경.save('./dimage/template.png')
+                    await asyncio.sleep(1)
+
+                    s = cv2.imread('./dimage/icon.png')
+                    t = cv2.imread('./dimage/template.png',
+                                   cv2.IMREAD_COLOR)
+                    divide_icon(s, t, int(x), int(y))
+                    await asyncio.sleep(1)
+                    QtWidgets.QApplication.processEvents()
+                except:
+                    pass
+            await asyncio.sleep(1)
+            봇인증 = capture('./dimage/antibot.png')
+            if 봇인증 != None:
+                try:
+                    print("안티봇1")
+                    await channel.send("봇인증 해결중. 복구되지 않을시 JS볼라에게 연락하세요.")
+                    pyautogui.moveTo(봇인증)
+                    pyautogui.click()
+                    time.sleep(8)
+                    봇인증2 = capture('./dimage/antibot2.png')
+                    x, y = 봇인증2
+                    아이콘 = pyautogui.screenshot(
+                        region=(int(x)+70, int(y)-20, 120, 40))
+                    아이콘.save('./dimage/icon.png')
+                    배경 = pyautogui.screenshot(
+                        region=(int(x)-80, int(y)+20, 265, 300))
+                    배경.save('./dimage/template.png')
+                    print("찾는중")
+                    await asyncio.sleep(1)
+                    s = cv2.imread('./dimage/icon.png')
+                    t = cv2.imread('./dimage/template.png',
+                                   cv2.IMREAD_COLOR)
+                    divide_icon(s, t, int(x), int(y))
+                    await asyncio.sleep(2)
+                except:
+                    pass
+            time.sleep(1)
+            if 봇인증 != None or 봇인증2 != None:
+                try:
+                    match_ok = capture('./dimage/check_ok.png')
+                    if not match_ok == None:
+                        pyautogui.moveTo(match_ok)
+                        pyautogui.click()
+                    await asyncio.sleep(3)
+                except:
+                    pass
+            time.sleep(1)
+            if 봇인증 == None or 봇인증2 == None:
+                런확인 = capture('./dimage/castle.png')
+                if 런확인 == None:
+                    runcheck += 1
+
+                if 런확인 != None:
+                    runcheck = 0
+
+            if runcheck >= 3:
+                await channel.send("재부팅합니다 문제가 복구되지 않을시 JS볼라에게 연락하세요.")
+                back = capture_row('./dimage/back.png')
+                if back != None:
+                    pyautogui.moveTo(back)
+                    pyautogui.click()
+                    await asyncio.sleep(1)
+                    backok = capture_row('./dimage/backok.png')
+                    if backok != None:
+                        pyautogui.moveTo(backok)
+                        pyautogui.click()
+                        await asyncio.sleep(4)
+                        라오킹아이콘 = capture("./dimage/rok.png")
+                        if 라오킹아이콘 != None:
+                            pyautogui.moveTo(라오킹아이콘[0], 라오킹아이콘[1])
+                            pyautogui.click()
+                            runcheck = 0
+                        await channel.send("재부팅 완료. \n문제가 복구되지 않을시 JS볼라에게 연락하세요.")
+                        await channel.send(file=discord.File('./dimage/screenshot.png'))
+            # print("체크완료")
+
+
+search_submissions.start()
+search_submissions1.start()
+
+client.run('NzcyMDc4MjIxNzY3OTk5NTI4.X51b4A.kWJ7LQFJtQZAIzF0rq3f2oLR7pY')
+# https://discordapp.com/oauth2/authorize?client_id=당신의봇의ClientID&scope=bot
